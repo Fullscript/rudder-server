@@ -186,13 +186,13 @@ func TestExtractErrorDetails(t *testing.T) {
 		{
 			caseDescription: "should validate the deprecation correctly",
 			inputErrMsg:     "Offline Conversions API is deprecated from onwards. Please use Conversions API, which is the latest version that supports Offline Conversions API and can be used until.",
-			expectedMsg:     "Offline Conversions API is deprecated from onwards Please use Conversions API which is the latest version that supports Offline Conversions API and can be used until",
+			expectedMsg:     "Offline Conversions API is deprecated from onwards Please use Conversions API which is the latest ve",
 			expectedCode:    "deprecation",
 		},
 		{
 			caseDescription: "should validate the deprecation correctly even though we have upper-case keywords",
 			inputErrMsg:     "Offline Conversions API is DeprEcated from onwards. Please use Conversions API, which is the latest version that supports Offline Conversions API and can be used until.",
-			expectedMsg:     "Offline Conversions API is DeprEcated from onwards Please use Conversions API which is the latest version that supports Offline Conversions API and can be used until",
+			expectedMsg:     "Offline Conversions API is DeprEcated from onwards Please use Conversions API which is the latest ve",
 			expectedCode:    "deprecation",
 		},
 		{
