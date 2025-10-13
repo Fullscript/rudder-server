@@ -6,12 +6,10 @@ import (
 	"syscall"
 	"time"
 
-	_ "go.uber.org/automaxprocs"
-
 	"github.com/rudderlabs/rudder-go-kit/config"
 	"github.com/rudderlabs/rudder-go-kit/logger"
+	_ "github.com/rudderlabs/rudder-go-kit/maxprocs"
 	"github.com/rudderlabs/rudder-go-kit/mem"
-
 	"github.com/rudderlabs/rudder-server/runner"
 	"github.com/rudderlabs/rudder-server/utils/signal"
 )
