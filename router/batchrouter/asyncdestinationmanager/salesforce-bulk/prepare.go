@@ -139,8 +139,8 @@ func determineOperation(externalIDs []map[string]string, defaultOperation string
 	}
 
 	for _, externalID := range externalIDs {
-		if externalID["type"] != "" {
-			return "insert"
+		if externalID["identifierType"] != "" {
+			return "upsert"
 		}
 	}
 

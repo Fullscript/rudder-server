@@ -109,23 +109,43 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 			expectedOperation: "update",
 		},
 		{
-			name: "type only externalId triggers insert",
+			name: "type only externalId uses configured default",
 			payload: `{
-                                "body": {
-                                        "JSON": {
-                                                "Email": "type-only@example.com",
-                                                "context": {
-                                                        "externalId": [
-                                                                {"type": "Salesforce-Lead"}
-                                                        ]
-                                                }
-                                        }
-                                }
-                        }`,
-			defaultOperation:  "update",
-			expectedOperation: "insert",
+                               "body": {
+                                       "JSON": {
+                                               "Email": "type-only@example.com",
+                                               "context": {
+                                                       "externalId": [
+                                                               {"type": "Salesforce-Lead"}
+                                                       ]
+                                               }
+                                       }
+                               }
+                       }`,
+			defaultOperation:  "upsert",
+			expectedOperation: "upsert",
 			expectedExternalIDs: []expectedExternalID{
 				{Type: "Salesforce-Lead", ID: "", IdentifierType: ""},
+			},
+		},
+		{
+			name: "identifierType without id infers upsert",
+			payload: `{
+                               "body": {
+                                       "JSON": {
+                                               "Email": "identifier-only@example.com",
+                                               "context": {
+                                                       "externalId": [
+                                                               {"type": "Salesforce-Lead", "identifierType": "External_Id__c"}
+                                                       ]
+                                               }
+                                       }
+                               }
+                       }`,
+			defaultOperation:  "insert",
+			expectedOperation: "upsert",
+			expectedExternalIDs: []expectedExternalID{
+				{Type: "Salesforce-Lead", ID: "", IdentifierType: "External_Id__c"},
 			},
 		},
 		{
