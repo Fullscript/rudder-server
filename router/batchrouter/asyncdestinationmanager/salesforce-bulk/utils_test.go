@@ -242,6 +242,34 @@ func TestSalesforceBulk_extractObjectInfo(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "metadata matches identifier injected into message",
+			jobs: []common.AsyncJob{
+				{
+					Message: map[string]interface{}{
+						"External_Id__c": "ACC123",
+					},
+					Metadata: map[string]interface{}{
+						"job_id": float64(12),
+						"externalId": []interface{}{
+							map[string]interface{}{
+								"type": "Salesforce-Lead",
+							},
+							map[string]interface{}{
+								"type":           "Salesforce-Account",
+								"id":             "ACC123",
+								"identifierType": "External_Id__c",
+							},
+						},
+					},
+				},
+			},
+			expected: &ObjectInfo{
+				ObjectType:      "Account",
+				ExternalIDField: "External_Id__c",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -311,7 +339,7 @@ func TestSalesforceBulk_extractFromVDM_DefaultIdentifierType(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			objectInfo, err := extractFromVDM(tc.externalIDRaw)
+			objectInfo, err := extractFromVDM(tc.externalIDRaw, map[string]interface{}{})
 			if tc.expectError {
 				require.Error(t, err)
 				if tc.expectedErrorMsg != "" {
@@ -325,6 +353,30 @@ func TestSalesforceBulk_extractFromVDM_DefaultIdentifierType(t *testing.T) {
 			require.Equal(t, tc.expectedField, objectInfo.ExternalIDField)
 		})
 	}
+}
+
+func TestSalesforceBulk_extractFromVDM_SelectsMatchingEntry(t *testing.T) {
+	t.Parallel()
+
+	metadata := []interface{}{
+		map[string]interface{}{
+			"type": "Salesforce-Lead",
+		},
+		map[string]interface{}{
+			"type":           "Salesforce-Account",
+			"id":             "ACC123",
+			"identifierType": "External_Id__c",
+		},
+	}
+
+	message := map[string]interface{}{
+		"External_Id__c": "ACC123",
+	}
+
+	objectInfo, err := extractFromVDM(metadata, message)
+	require.NoError(t, err)
+	require.Equal(t, "Account", objectInfo.ObjectType)
+	require.Equal(t, "External_Id__c", objectInfo.ExternalIDField)
 }
 
 func TestSalesforceBulk_createCSVFile(t *testing.T) {

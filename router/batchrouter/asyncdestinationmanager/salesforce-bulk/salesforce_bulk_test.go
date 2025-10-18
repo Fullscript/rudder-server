@@ -28,14 +28,14 @@ func TestSalesforceBulk_Transform(t *testing.T) {
 			job: &jobsdb.JobT{
 				JobID: 123,
 				EventPayload: []byte(`{
-					"body": {
-						"JSON": {
-							"Email": "test@example.com",
-							"FirstName": "John",
-							"LastName": "Doe"
+                                        "body": {
+                                                "JSON": {
+                                                        "Email": "test@example.com",
+                                                        "FirstName": "John",
+                                                        "LastName": "Doe"
+                                                }
                                         }
-                                }
-                        }`),
+                                }`),
 			},
 			wantErr:          false,
 			defaultOperation: "update",
@@ -95,6 +95,8 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 		expectedExternalIDs   []expectedExternalID
 		expectedIdentifierKey string
 		expectedIdentifierVal string
+		expectedObjectType    string
+		expectedExternalField string
 	}{
 		{
 			name: "no externalId falls back to default operation",
@@ -191,6 +193,8 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 			},
 			expectedIdentifierKey: "External_Id__c",
 			expectedIdentifierVal: "ACC123",
+			expectedObjectType:    "Account",
+			expectedExternalField: "External_Id__c",
 		},
 	}
 
@@ -237,6 +241,13 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 				require.Equal(t, expected.Type, entry["type"])
 				require.Equal(t, expected.ID, entry["id"])
 				require.Equal(t, expected.IdentifierType, entry["identifierType"])
+			}
+
+			if tc.expectedObjectType != "" {
+				objectInfo, err := extractFromVDM(externalIDRaw, parsed.Message)
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedObjectType, objectInfo.ObjectType)
+				require.Equal(t, tc.expectedExternalField, objectInfo.ExternalIDField)
 			}
 		})
 	}
