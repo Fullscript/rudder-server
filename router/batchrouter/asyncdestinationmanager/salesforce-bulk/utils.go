@@ -92,6 +92,9 @@ func extractFromVDM(externalIDRaw interface{}) (*ObjectInfo, error) {
 	objectType = strings.Replace(objectType, "salesforce-", "", 1)
 
 	identifierType, _ := externalIDMap["identifierType"].(string)
+	if identifierType == "" {
+		identifierType = "Id"
+	}
 
 	return &ObjectInfo{
 		ObjectType:      objectType,

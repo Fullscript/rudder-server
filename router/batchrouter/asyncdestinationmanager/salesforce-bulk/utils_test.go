@@ -270,6 +270,63 @@ func TestSalesforceBulk_extractObjectInfo(t *testing.T) {
 	}
 }
 
+func TestSalesforceBulk_extractFromVDM_DefaultIdentifierType(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name             string
+		externalIDRaw    interface{}
+		expectedObject   string
+		expectedField    string
+		expectError      bool
+		expectedErrorMsg string
+	}{
+		{
+			name: "identifierType defaults to Id when empty",
+			externalIDRaw: []interface{}{
+				map[string]interface{}{
+					"type":           "Salesforce-Account",
+					"id":             "001XYZ",
+					"identifierType": "",
+				},
+			},
+			expectedObject: "Account",
+			expectedField:  "Id",
+		},
+		{
+			name: "identifierType defaults to Id when missing",
+			externalIDRaw: []interface{}{
+				map[string]interface{}{
+					"type": "Salesforce-Contact",
+					"id":   "003XYZ",
+				},
+			},
+			expectedObject: "Contact",
+			expectedField:  "Id",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			objectInfo, err := extractFromVDM(tc.externalIDRaw)
+			if tc.expectError {
+				require.Error(t, err)
+				if tc.expectedErrorMsg != "" {
+					require.Contains(t, err.Error(), tc.expectedErrorMsg)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedObject, objectInfo.ObjectType)
+			require.Equal(t, tc.expectedField, objectInfo.ExternalIDField)
+		})
+	}
+}
+
 func TestSalesforceBulk_createCSVFile(t *testing.T) {
 	testCases := []struct {
 		name             string

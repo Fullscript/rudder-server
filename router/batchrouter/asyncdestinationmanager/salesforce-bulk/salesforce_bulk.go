@@ -6,18 +6,23 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tidwall/gjson"
-
 	"github.com/rudderlabs/rudder-go-kit/jsonrs"
 	"github.com/rudderlabs/rudder-server/jobsdb"
 	"github.com/rudderlabs/rudder-server/router/batchrouter/asyncdestinationmanager/common"
 )
 
 func (s *SalesforceBulkUploader) Transform(job *jobsdb.JobT) (string, error) {
-	return common.GetMarshalledData(
-		gjson.GetBytes(job.EventPayload, "body.JSON").String(),
-		job.JobID,
-	)
+	asyncJob, err := prepareAsyncJob(job.EventPayload, job.JobID, s.config.Operation)
+	if err != nil {
+		return "", err
+	}
+
+	responsePayload, err := jsonrs.Marshal(asyncJob)
+	if err != nil {
+		return "", err
+	}
+
+	return string(responsePayload), nil
 }
 
 func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestinationStruct) common.AsyncUploadOutput {
