@@ -196,6 +196,30 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 			expectedObjectType:    "Account",
 			expectedExternalField: "External_Id__c",
 		},
+		{
+			name: "single payload externalId array mixes types",
+			payload: `{
+                                "body": {
+                                        "JSON": {
+                                                "Name": "mixed-array", 
+                                                "externalId": [
+                                                        {"type": "Salesforce-Contact", "identifierType": "Email"},
+                                                        {"type": "Salesforce-Account", "id": "ACC789", "identifierType": "External_Id__c"}
+                                                ]
+                                        }
+                                }
+                        }`,
+			defaultOperation:  "insert",
+			expectedOperation: "upsert",
+			expectedExternalIDs: []expectedExternalID{
+				{Type: "Salesforce-Contact", ID: "", IdentifierType: "Email"},
+				{Type: "Salesforce-Account", ID: "ACC789", IdentifierType: "External_Id__c"},
+			},
+			expectedIdentifierKey: "External_Id__c",
+			expectedIdentifierVal: "ACC789",
+			expectedObjectType:    "Account",
+			expectedExternalField: "External_Id__c",
+		},
 	}
 
 	for _, tc := range testCases {
