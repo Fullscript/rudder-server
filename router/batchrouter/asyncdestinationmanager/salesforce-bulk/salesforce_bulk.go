@@ -42,16 +42,6 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 		}
 	}
 
-	objectInfo, err := extractObjectInfo(input, s.config)
-	if err != nil {
-		return common.AsyncUploadOutput{
-			FailedJobIDs:  append(failedJobIDs, importingJobIDs...),
-			FailedReason:  fmt.Sprintf("Error extracting object info: %v", err),
-			FailedCount:   len(failedJobIDs) + len(importingJobIDs),
-			DestinationID: destinationID,
-		}
-	}
-
 	jobsByOperation := groupJobsByOperation(input, s.config.Operation)
 
 	var allImportingJobIDs []int64
@@ -66,10 +56,43 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 		remainingJobs := jobs
 
 		for len(remainingJobs) > 0 {
+			var (
+				currentObjectInfo *ObjectInfo
+				matchingJobs      []common.AsyncJob
+				nonMatchingJobs   []common.AsyncJob
+			)
+
+			for _, job := range remainingJobs {
+				info, err := extractObjectInfoFromJob(job, s.config)
+				if err != nil {
+					if jobID, ok := job.Metadata["job_id"].(float64); ok {
+						s.logger.Errorf("Error extracting object info for job %d: %v", int64(jobID), err)
+						allFailedJobIDs = append(allFailedJobIDs, int64(jobID))
+					} else {
+						s.logger.Errorf("Error extracting object info for job: %v", err)
+					}
+					continue
+				}
+
+				if currentObjectInfo == nil {
+					currentObjectInfo = info
+				}
+
+				if info.ObjectType == currentObjectInfo.ObjectType && info.ExternalIDField == currentObjectInfo.ExternalIDField {
+					matchingJobs = append(matchingJobs, job)
+				} else {
+					nonMatchingJobs = append(nonMatchingJobs, job)
+				}
+			}
+
+			if currentObjectInfo == nil || len(matchingJobs) == 0 {
+				break
+			}
+
 			s.hashMapMutex.Lock()
 			csvFilePath, csvHeaders, insertedJobIDs, overflowedJobs, err := createCSVFile(
 				destinationID,
-				remainingJobs,
+				matchingJobs,
 				s.dataHashToJobID,
 				operation,
 			)
@@ -77,7 +100,7 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 
 			if err != nil {
 				s.logger.Errorf("Error creating CSV for operation %s: %v", operation, err)
-				for _, job := range remainingJobs {
+				for _, job := range matchingJobs {
 					if jobID, ok := job.Metadata["job_id"].(float64); ok {
 						allFailedJobIDs = append(allFailedJobIDs, int64(jobID))
 					}
@@ -90,7 +113,7 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 					s.logger.Debugf("Failed to remove empty CSV file %s: %v", csvFilePath, err)
 				}
 				s.logger.Errorf("No jobs fit in CSV for operation %s, marking as failed", operation)
-				for _, job := range remainingJobs {
+				for _, job := range matchingJobs {
 					if jobID, ok := job.Metadata["job_id"].(float64); ok {
 						allFailedJobIDs = append(allFailedJobIDs, int64(jobID))
 					}
@@ -102,9 +125,9 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 				len(insertedJobIDs), operation, len(allImportingJobIDs)/100+1, len(jobs))
 
 			sfJobID, apiError := s.apiService.CreateJob(
-				objectInfo.ObjectType,
+				currentObjectInfo.ObjectType,
 				operation,
-				objectInfo.ExternalIDField,
+				currentObjectInfo.ExternalIDField,
 			)
 			if apiError != nil {
 				s.logger.Errorf("Error creating Salesforce job for operation %s: %v", operation, apiError)
@@ -149,7 +172,7 @@ func (s *SalesforceBulkUploader) Upload(asyncDestStruct *common.AsyncDestination
 				s.logger.Debugf("Failed to remove CSV file %s: %v", csvFilePath, err)
 			}
 
-			remainingJobs = overflowedJobs
+			remainingJobs = append(overflowedJobs, nonMatchingJobs...)
 		}
 	}
 

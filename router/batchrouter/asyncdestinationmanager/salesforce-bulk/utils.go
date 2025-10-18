@@ -50,28 +50,6 @@ func readJobsFromFile(filePath string) ([]common.AsyncJob, error) {
 	return jobs, nil
 }
 
-func extractObjectInfo(jobs []common.AsyncJob, config DestinationConfig) (*ObjectInfo, error) {
-	if len(jobs) == 0 {
-		return nil, fmt.Errorf("no jobs to process")
-	}
-
-	firstJob := jobs[0]
-
-	if externalIDRaw, ok := firstJob.Metadata["externalId"]; ok {
-		return extractFromVDM(externalIDRaw, firstJob.Message)
-	}
-
-	objectType := config.ObjectType
-	if objectType == "" {
-		objectType = "Lead"
-	}
-
-	return &ObjectInfo{
-		ObjectType:      objectType,
-		ExternalIDField: "Email",
-	}, nil
-}
-
 func extractFromVDM(externalIDRaw interface{}, message map[string]interface{}) (*ObjectInfo, error) {
 	externalIDArray, ok := externalIDRaw.([]interface{})
 	if !ok || len(externalIDArray) == 0 {
@@ -134,6 +112,26 @@ func extractFromVDM(externalIDRaw interface{}, message map[string]interface{}) (
 	}
 
 	return buildObjectInfo(typeStr, identifierType), nil
+}
+
+func extractObjectInfoFromJob(job common.AsyncJob, config DestinationConfig) (*ObjectInfo, error) {
+	if externalIDRaw, ok := job.Metadata["externalId"]; ok {
+		return extractFromVDM(externalIDRaw, job.Message)
+	}
+
+	if externalIDRaw, ok := job.Message["externalId"]; ok {
+		return extractFromVDM(externalIDRaw, job.Message)
+	}
+
+	objectType := config.ObjectType
+	if objectType == "" {
+		objectType = "Lead"
+	}
+
+	return &ObjectInfo{
+		ObjectType:      objectType,
+		ExternalIDField: "Email",
+	}, nil
 }
 
 func buildObjectInfo(typeStr, identifierType string) *ObjectInfo {

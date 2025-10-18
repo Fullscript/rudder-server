@@ -344,6 +344,92 @@ func TestSalesforceBulk_Upload(t *testing.T) {
 		require.True(t, os.IsNotExist(err), "CSV file should be cleaned up after upload")
 	})
 
+	t.Run("mixed object types split into separate Salesforce jobs", func(t *testing.T) {
+		tempFileMixed, err := os.CreateTemp("", "test_mixed_object_*.json")
+		require.NoError(t, err)
+		defer os.Remove(tempFileMixed.Name())
+
+		mixedJobs := []common.AsyncJob{
+			{
+				Message: map[string]interface{}{
+					"Email":           "lead@example.com",
+					"rudderOperation": "upsert",
+				},
+				Metadata: map[string]interface{}{
+					"job_id": float64(101),
+					"externalId": []interface{}{
+						map[string]interface{}{
+							"type":           "Salesforce-Lead",
+							"id":             "lead@example.com",
+							"identifierType": "Email",
+						},
+					},
+				},
+			},
+			{
+				Message: map[string]interface{}{
+					"External_Id__c":  "ACC-123",
+					"rudderOperation": "upsert",
+				},
+				Metadata: map[string]interface{}{
+					"job_id": float64(102),
+					"externalId": []interface{}{
+						map[string]interface{}{
+							"type":           "Salesforce-Account",
+							"id":             "ACC-123",
+							"identifierType": "External_Id__c",
+						},
+					},
+				},
+			},
+		}
+
+		for _, job := range mixedJobs {
+			jobBytes, _ := jsonrs.Marshal(job)
+			tempFileMixed.Write(jobBytes)
+			tempFileMixed.Write([]byte("\n"))
+		}
+		tempFileMixed.Close()
+
+		type createCall struct {
+			Object    string
+			Field     string
+			Operation string
+		}
+
+		var calls []createCall
+		mockAPI := &MockSalesforceAPIService{
+			CreateJobFunc: func(objectName, operation, externalIDField string) (string, *APIError) {
+				calls = append(calls, createCall{Object: objectName, Field: externalIDField, Operation: operation})
+				return fmt.Sprintf("mixed-job-%d", len(calls)), nil
+			},
+			UploadDataFunc: func(jobID, csvFilePath string) *APIError { return nil },
+			CloseJobFunc:   func(jobID string) *APIError { return nil },
+		}
+
+		uploader := &SalesforceBulkUploader{
+			logger:          logger.NOP,
+			apiService:      mockAPI,
+			config:          DestinationConfig{Operation: "upsert"},
+			dataHashToJobID: make(map[string][]int64),
+		}
+
+		result := uploader.Upload(&common.AsyncDestinationStruct{
+			Destination: &backendconfig.DestinationT{ID: "mixed-dest"},
+			FileName:    tempFileMixed.Name(),
+		})
+
+		require.Equal(t, 2, len(calls))
+		require.Equal(t, "Lead", calls[0].Object)
+		require.Equal(t, "Email", calls[0].Field)
+		require.Equal(t, "upsert", calls[0].Operation)
+		require.Equal(t, "Account", calls[1].Object)
+		require.Equal(t, "External_Id__c", calls[1].Field)
+		require.Equal(t, "upsert", calls[1].Operation)
+		require.Equal(t, 2, result.ImportingCount)
+		require.Equal(t, 0, result.FailedCount)
+	})
+
 	t.Run("successful upload - multiple operations", func(t *testing.T) {
 		// Create temp file with mixed operations
 		tempFileMulti, err := os.CreateTemp("", "test_multi_op_*.json")
