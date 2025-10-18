@@ -240,13 +240,17 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 			err = json.Unmarshal([]byte(result), &parsed)
 			require.NoError(t, err)
 
-			require.Equal(t, tc.expectedOperation, parsed.Message["rudderOperation"])
+			expectedMessage := messageFromPayload(t, tc.payload)
+			expectedMessage["rudderOperation"] = tc.expectedOperation
 
 			if tc.expectedIdentifierKey != "" {
+				expectedMessage[tc.expectedIdentifierKey] = tc.expectedIdentifierVal
 				require.Equal(t, tc.expectedIdentifierVal, parsed.Message[tc.expectedIdentifierKey])
 			} else {
 				require.NotContains(t, parsed.Message, "Id")
 			}
+
+			require.Equal(t, expectedMessage, parsed.Message)
 
 			externalIDRaw, ok := parsed.Metadata["externalId"]
 			if len(tc.expectedExternalIDs) == 0 {
@@ -275,6 +279,24 @@ func TestSalesforceBulk_TransformExternalIDHandling(t *testing.T) {
 			}
 		})
 	}
+}
+
+func messageFromPayload(t *testing.T, payload string) map[string]interface{} {
+	t.Helper()
+
+	var envelope struct {
+		Body struct {
+			JSON map[string]interface{} `json:"JSON"`
+		} `json:"body"`
+	}
+
+	require.NoError(t, json.Unmarshal([]byte(payload), &envelope))
+
+	if envelope.Body.JSON == nil {
+		return map[string]interface{}{}
+	}
+
+	return envelope.Body.JSON
 }
 
 func TestSalesforceBulk_Upload(t *testing.T) {
