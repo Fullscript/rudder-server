@@ -33,7 +33,7 @@ func newPartitionWorker(ctx context.Context, rt *Handle, partition string) *part
 			id:                        i,
 			ctx:                       ctx,
 			cancelFunc:                cancelFunc,
-			inputCh:                   make(chan workerJob, rt.workerInputBufferSize),
+			workerBuffer:              newWorkerBuffer(rt.workerInputBufferSize),
 			barrier:                   rt.barrier,
 			rt:                        rt,
 			deliveryTimeStat:          stats.Default.NewTaggedStat("router_delivery_time", stats.TimerType, stats.Tags{"destType": rt.destType}),
@@ -101,7 +101,7 @@ func (pw *partitionWorker) SleepDurations() (min, max time.Duration) {
 func (pw *partitionWorker) Stop() {
 	for _, worker := range pw.workers {
 		worker.cancelFunc()
-		close(worker.inputCh)
+		worker.workerBuffer.Close()
 	}
 	_ = pw.g.Wait()
 }

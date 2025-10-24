@@ -210,7 +210,7 @@ func (rt *Handle) pickup(ctx context.Context, partition string, workers []*worke
 	}
 
 	type reservedJob struct {
-		slot        *workerSlot
+		slot        *reservedSlot
 		job         *jobsdb.JobT
 		drainReason string
 		parameters  routerutils.JobParameters
@@ -599,7 +599,7 @@ func (rt *Handle) getQueryParams(partition string, pickUpCount int) jobsdb.GetQu
 }
 
 type workerJobSlot struct {
-	slot        *workerSlot
+	slot        *reservedSlot
 	drainReason string
 }
 

@@ -278,13 +278,13 @@ func TestBackoff(t *testing.T) {
 			},
 		}
 		workers := []*worker{{
-			logger:  logger.NOP,
-			inputCh: make(chan workerJob, 3),
-			barrier: barrier,
+			logger:       logger.NOP,
+			workerBuffer: newWorkerBuffer(3),
+			barrier:      barrier,
 		}}
 		t.Run("eventorder disabled", func(t *testing.T) {
 			r.guaranteeUserEventOrder = false
-			workers[0].inputReservations = 0
+			workers[0].workerBuffer = newWorkerBuffer(3)
 
 			slot, err := r.findWorkerSlot(context.Background(), workers, backoffJob, parameters, map[eventorder.BarrierKey]struct{}{})
 			require.Nil(t, slot)
@@ -317,7 +317,7 @@ func TestBackoff(t *testing.T) {
 
 		t.Run("eventorder enabled", func(t *testing.T) {
 			r.guaranteeUserEventOrder = true
-			workers[0].inputReservations = 0
+			workers[0].workerBuffer = newWorkerBuffer(3)
 
 			slot, err := r.findWorkerSlot(context.Background(), workers, backoffJob, parameters, map[eventorder.BarrierKey]struct{}{})
 			require.Nil(t, slot)
@@ -353,7 +353,7 @@ func TestBackoff(t *testing.T) {
 		t.Run("eventorder enabled with drain job", func(t *testing.T) {
 			r.drainer = &drainer{drain: true, reason: "drain job due to some reason"}
 			r.guaranteeUserEventOrder = true
-			workers[0].inputReservations = 0
+			workers[0].workerBuffer = newWorkerBuffer(3)
 
 			slot, err := r.findWorkerSlot(context.Background(), workers, backoffJob, parameters, map[eventorder.BarrierKey]struct{}{})
 			require.NotNil(t, slot)
@@ -422,7 +422,7 @@ func TestBackoff(t *testing.T) {
 
 		t.Run("job not blocked after event ordering is disabled(destinationID level)", func(t *testing.T) {
 			r.guaranteeUserEventOrder = true
-			workers[0].inputReservations = 0
+			workers[0].workerBuffer = newWorkerBuffer(3)
 			job := &jobsdb.JobT{
 				JobID:      1,
 				Parameters: []byte(`{"destination_id": "destination"}`),
@@ -458,7 +458,7 @@ func TestBackoff(t *testing.T) {
 
 		t.Run("job not blocked after event ordering is disabled(workspaceID level)", func(t *testing.T) {
 			r.guaranteeUserEventOrder = true
-			workers[0].inputReservations = 0
+			workers[0].workerBuffer = newWorkerBuffer(3)
 			job := &jobsdb.JobT{
 				JobID:      1,
 				Parameters: []byte(`{"destination_id": "destination"}`),
