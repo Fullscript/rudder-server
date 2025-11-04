@@ -91,6 +91,7 @@ type GetQueryParams struct {
 
 	// if IgnoreCustomValFiltersInQuery is true, CustomValFilters is not going to be used
 	IgnoreCustomValFiltersInQuery bool
+	Partitions                    []string
 	WorkspaceID                   string
 	CustomValFilters              []string
 	ParameterFilters              []ParameterFilterT
@@ -1824,6 +1825,7 @@ func (jd *Handle) WithTx(f func(tx *Tx) error) error {
 func (jd *Handle) invalidateCacheForJobs(ds dataSetT, jobList []*JobT) {
 	cacheKeys := make(map[string]map[string]map[string]struct{})
 	for _, job := range jobList {
+		partitions := []string{} // TODO: fill partitions
 		workspace := job.WorkspaceId
 		customVal := job.CustomVal
 
@@ -1846,7 +1848,7 @@ func (jd *Handle) invalidateCacheForJobs(ds dataSetT, jobList []*JobT) {
 		paramsKey := strings.Join(params, "#")
 		if _, ok := cacheKeys[workspace][customVal][paramsKey]; !ok {
 			cacheKeys[workspace][customVal][paramsKey] = struct{}{}
-			jd.noResultsCache.Invalidate(ds.Index, workspace, []string{customVal}, []string{Unprocessed.State}, parameterFilters)
+			jd.noResultsCache.Invalidate(ds.Index, partitions, workspace, []string{customVal}, []string{Unprocessed.State}, parameterFilters)
 		}
 	}
 }
@@ -2109,10 +2111,11 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 	stateFilters := params.stateFilters
 	customValFilters := params.CustomValFilters
 	var parameterFilters ParameterFilterList = params.ParameterFilters
+	partitions := params.Partitions
 	workspaceID := params.WorkspaceID
 	checkValidJobState(jd, stateFilters)
 
-	if jd.noResultsCache.Get(ds.Index, workspaceID, customValFilters, stateFilters, parameterFilters) {
+	if jd.noResultsCache.Get(ds.Index, partitions, workspaceID, customValFilters, stateFilters, parameterFilters) {
 		jd.logger.Debugn("[getJobsDS] Empty cache hit for ds: %v, stateFilters: %v, customValFilters: %v, parameterFilters: %v",
 			logger.NewStringField("ds", ds.String()),
 			logger.NewStringField("stateFilters", strings.Join(stateFilters, ",")),
@@ -2129,7 +2132,7 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 	}
 
 	stateFilters = lo.Filter(stateFilters, func(state string, _ int) bool { // exclude states for which we already know that there are no jobs
-		return !jd.noResultsCache.Get(ds.Index, workspaceID, customValFilters, []string{state}, parameterFilters)
+		return !jd.noResultsCache.Get(ds.Index, partitions, workspaceID, customValFilters, []string{state}, parameterFilters)
 	})
 
 	defer jd.getTimerStat("jobsdb_get_jobs_ds_time", &tags).RecordDuration()()
@@ -2146,7 +2149,7 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 			if state == Unprocessed.State && jd.ownerType == Read && lastDS {
 				continue
 			}
-			cacheTx[state] = jd.noResultsCache.StartNoResultTx(ds.Index, workspaceID, customValFilters, []string{state}, parameterFilters)
+			cacheTx[state] = jd.noResultsCache.StartNoResultTx(ds.Index, partitions, workspaceID, customValFilters, []string{state}, parameterFilters)
 		}
 	}
 
@@ -2840,19 +2843,25 @@ func (jd *Handle) internalUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsLis
 		// clear cache
 		for ds, dsKeys := range updatedStatesByDS {
 			if len(dsKeys) == 0 { // if no keys, we need to invalidate all keys
-				jd.noResultsCache.Invalidate(ds.Index, "", nil, nil, nil)
+				jd.noResultsCache.Invalidate(ds.Index, nil, "", nil, nil, nil)
 			}
-			for workspace, wsKeys := range dsKeys {
-				if len(wsKeys) == 0 { // if no keys, we need to invalidate all keys
-					jd.noResultsCache.Invalidate(ds.Index, workspace, nil, nil, nil)
+			for partition, partKeys := range dsKeys {
+				partitionList := []string{partition}
+				if len(partKeys) == 0 { // if no keys, we need to invalidate all keys
+					jd.noResultsCache.Invalidate(ds.Index, partitionList, "", nil, nil, nil)
 				}
-				for state, parametersMap := range wsKeys {
-					stateList := []string{state}
-					if len(parametersMap) == 0 { // if no keys, we need to invalidate all keys
-						jd.noResultsCache.Invalidate(ds.Index, workspace, customValFilters, stateList, nil)
+				for workspace, wsKeys := range partKeys {
+					if len(wsKeys) == 0 { // if no keys, we need to invalidate all keys
+						jd.noResultsCache.Invalidate(ds.Index, partitionList, workspace, nil, nil, nil)
 					}
-					parameterFilters := lo.Keys(parametersMap)
-					jd.noResultsCache.Invalidate(ds.Index, workspace, customValFilters, stateList, parameterFilters)
+					for state, parametersMap := range wsKeys {
+						stateList := []string{state}
+						if len(parametersMap) == 0 { // if no keys, we need to invalidate all keys
+							jd.noResultsCache.Invalidate(ds.Index, partitionList, workspace, stateList, nil)
+						}
+						parameterFilters := lo.Keys(parametersMap)
+						jd.noResultsCache.Invalidate(ds.Index, partitionList, workspace, stateList, parameterFilters)
+					}
 				}
 			}
 		}
