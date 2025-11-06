@@ -65,7 +65,7 @@ Primary consumers: Router Transformer and the Regulation Service.
 - Transport:
   - `OAuthTransport` is injected into `client.Transport` and handles all OAuth logic.
 - OAuth orchestration:
-  - `OAuthHandler` methods: `FetchToken`, `RefreshToken`, `AuthStatusToggle`.
+  - `OAuthHandler` methods: `FetchToken`, `RefreshToken`.
 - Extensions:
   - `extensions.Augmenter` augments requests with provider‑specific auth material from the retrieved `secret`.
 
