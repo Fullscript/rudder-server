@@ -2342,43 +2342,47 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 }
 
 // workspace -> state -> set of params
-type updateJobStatusStats map[string]map[string]map[string]UpdateJobStatusStats
+type updateJobStatusStats map[string]map[string]map[string]*UpdateJobStatusStats
 
 // Merges metrics from two updateJobStatusStats together
 func (ujss updateJobStatusStats) Merge(other updateJobStatusStats) {
 	for ws, states := range other {
 		if _, ok := ujss[ws]; !ok {
-			ujss[ws] = make(map[string]map[string]UpdateJobStatusStats)
+			ujss[ws] = make(map[string]map[string]*UpdateJobStatusStats)
 		}
 		for state, paramsMetrics := range states {
 			if _, ok := ujss[ws][state]; !ok {
-				ujss[ws][state] = make(map[string]UpdateJobStatusStats)
+				ujss[ws][state] = make(map[string]*UpdateJobStatusStats)
 			}
 			for params, metrics := range paramsMetrics {
-				existingMetrics := ujss[ws][state][params]
-				existingMetrics.parameters = metrics.parameters
+				existingMetrics, ok := ujss[ws][state][params]
+				if !ok {
+					existingMetrics = &UpdateJobStatusStats{parameters: metrics.parameters}
+					ujss[ws][state][params] = existingMetrics
+				}
 				existingMetrics.count += metrics.count
 				existingMetrics.bytes += metrics.bytes
-				ujss[ws][state][params] = existingMetrics
 			}
 		}
 	}
 }
 
 // Aggregates metrics by state across all workspaces
-func (ujss updateJobStatusStats) StatsByState() map[string]map[string]UpdateJobStatusStats {
-	result := make(map[string]map[string]UpdateJobStatusStats)
+func (ujss updateJobStatusStats) StatsByState() map[string]map[string]*UpdateJobStatusStats {
+	result := make(map[string]map[string]*UpdateJobStatusStats)
 	for _, states := range ujss {
 		for state, paramsMetrics := range states {
 			if _, ok := result[state]; !ok {
-				result[state] = make(map[string]UpdateJobStatusStats)
+				result[state] = make(map[string]*UpdateJobStatusStats)
 			}
 			for params, metrics := range paramsMetrics {
-				existingMetrics := result[state][params]
-				existingMetrics.parameters = metrics.parameters
+				existingMetrics, ok := result[state][params]
+				if !ok {
+					existingMetrics = &UpdateJobStatusStats{parameters: metrics.parameters}
+					result[state][params] = existingMetrics
+				}
 				existingMetrics.count += metrics.count
 				existingMetrics.bytes += metrics.bytes
-				result[state][params] = existingMetrics
 			}
 		}
 	}
@@ -2416,29 +2420,28 @@ func (jd *Handle) updateJobStatusDSInTx(ctx context.Context, tx *Tx, ds dataSetT
 		for _, status := range statusList {
 			//  Handle the case when google analytics returns gif in response
 			if _, ok := updatedStates[status.WorkspaceId]; !ok {
-				updatedStates[status.WorkspaceId] = make(map[string]map[string]UpdateJobStatusStats)
+				updatedStates[status.WorkspaceId] = make(map[string]map[string]*UpdateJobStatusStats)
 			}
 			if _, ok := updatedStates[status.WorkspaceId][status.JobState]; !ok {
-				updatedStates[status.WorkspaceId][status.JobState] = make(map[string]UpdateJobStatusStats)
+				updatedStates[status.WorkspaceId][status.JobState] = make(map[string]*UpdateJobStatusStats)
 			}
+			var parameters ParameterFilterList
+			var parametersKey string
 			if status.JobParameters != nil {
-				var parameters ParameterFilterList
 				for _, param := range cacheParameterFilters {
 					v := gjson.GetBytes(status.JobParameters, param).Str
 					parameters = append(parameters, ParameterFilterT{Name: param, Value: v})
 				}
-				parametersKey := parameters.String()
-				pm := updatedStates[status.WorkspaceId][status.JobState][parametersKey]
-				pm.parameters = parameters // might be zero
-				pm.count++
-				pm.bytes += len(status.ErrorResponse)
-				updatedStates[status.WorkspaceId][status.JobState][parametersKey] = pm
-			} else { // no parameters, empty key
-				pm := updatedStates[status.WorkspaceId][status.JobState][""]
-				pm.count++
-				pm.bytes += len(status.ErrorResponse)
-				updatedStates[status.WorkspaceId][status.JobState][""] = pm
+				parametersKey = parameters.String()
+
 			}
+			pm, ok := updatedStates[status.WorkspaceId][status.JobState][parametersKey]
+			if !ok {
+				pm = &UpdateJobStatusStats{parameters: parameters}
+				updatedStates[status.WorkspaceId][status.JobState][parametersKey] = pm
+			}
+			pm.count++
+			pm.bytes += len(status.ErrorResponse)
 
 			if !utf8.ValidString(string(status.ErrorResponse)) {
 				status.ErrorResponse = []byte(`{}`)
@@ -2916,8 +2919,8 @@ func (jd *Handle) internalUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsLis
 					parameterFilters := lo.UniqBy( // gather unique parameter filters
 						lo.FlatMap(
 							lo.Values(parametersStats), // from all JobStatusMetrics
-							func(jsm UpdateJobStatusStats, _ int) []ParameterFilterT {
-								return jsm.parameters
+							func(ujss *UpdateJobStatusStats, _ int) []ParameterFilterT {
+								return ujss.parameters
 							},
 						),
 						func(pf ParameterFilterT) string {
