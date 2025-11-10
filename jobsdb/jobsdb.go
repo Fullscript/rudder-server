@@ -603,7 +603,7 @@ type ParameterFilterT struct {
 }
 
 func (p ParameterFilterT) String() string {
-	return "Name=" + p.Name + ",Value=" + p.Value
+	return p.Name + ":" + p.Value
 }
 
 func (p ParameterFilterT) GetName() string {
@@ -2341,7 +2341,61 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 	}, true, nil
 }
 
-func (jd *Handle) updateJobStatusDSInTx(ctx context.Context, tx *Tx, ds dataSetT, statusList []*JobStatusT, tags statTags) (updatedStates map[string]map[string]map[ParameterFilterT]struct{}, err error) {
+// workspace -> state -> set of params
+type updateJobStatusStats map[string]map[string]map[string]UpdateJobStatusStats
+
+// Merges metrics from two updateJobStatusStats together
+func (ujss updateJobStatusStats) Merge(other updateJobStatusStats) {
+	for ws, states := range other {
+		if _, ok := ujss[ws]; !ok {
+			ujss[ws] = make(map[string]map[string]UpdateJobStatusStats)
+		}
+		for state, paramsMetrics := range states {
+			if _, ok := ujss[ws][state]; !ok {
+				ujss[ws][state] = make(map[string]UpdateJobStatusStats)
+			}
+			for params, metrics := range paramsMetrics {
+				existingMetrics := ujss[ws][state][params]
+				existingMetrics.parameters = metrics.parameters
+				existingMetrics.count += metrics.count
+				existingMetrics.bytes += metrics.bytes
+				ujss[ws][state][params] = existingMetrics
+			}
+		}
+	}
+}
+
+// Aggregates metrics by state across all workspaces
+func (ujss updateJobStatusStats) StatsByState() map[string]map[string]UpdateJobStatusStats {
+	result := make(map[string]map[string]UpdateJobStatusStats)
+	for _, states := range ujss {
+		for state, paramsMetrics := range states {
+			if _, ok := result[state]; !ok {
+				result[state] = make(map[string]UpdateJobStatusStats)
+			}
+			for params, metrics := range paramsMetrics {
+				existingMetrics := result[state][params]
+				existingMetrics.parameters = metrics.parameters
+				existingMetrics.count += metrics.count
+				existingMetrics.bytes += metrics.bytes
+				result[state][params] = existingMetrics
+			}
+		}
+	}
+	return result
+}
+
+// Stats for jobs grouped by status and parameters
+type UpdateJobStatusStats struct {
+	// job parameters
+	parameters ParameterFilterList
+	// number of jobs
+	count int
+	// total size of error responses in bytes
+	bytes int
+}
+
+func (jd *Handle) updateJobStatusDSInTx(ctx context.Context, tx *Tx, ds dataSetT, statusList []*JobStatusT, tags statTags) (updatedStates updateJobStatusStats, err error) {
 	if len(statusList) == 0 {
 		return updatedStates, err
 	}
@@ -2350,8 +2404,7 @@ func (jd *Handle) updateJobStatusDSInTx(ctx context.Context, tx *Tx, ds dataSetT
 		"update_job_status_ds_time",
 		&tags,
 	).RecordDuration()()
-	// workspace -> state -> params
-	updatedStates = map[string]map[string]map[ParameterFilterT]struct{}{}
+	updatedStates = updateJobStatusStats{}
 	store := func() error {
 		stmt, err := tx.PrepareContext(ctx, pq.CopyIn(ds.JobStatusTable, "job_id", "job_state", "attempt", "exec_time",
 			"retry_time", "error_code", "error_response", "parameters"))
@@ -2363,16 +2416,28 @@ func (jd *Handle) updateJobStatusDSInTx(ctx context.Context, tx *Tx, ds dataSetT
 		for _, status := range statusList {
 			//  Handle the case when google analytics returns gif in response
 			if _, ok := updatedStates[status.WorkspaceId]; !ok {
-				updatedStates[status.WorkspaceId] = make(map[string]map[ParameterFilterT]struct{})
+				updatedStates[status.WorkspaceId] = make(map[string]map[string]UpdateJobStatusStats)
 			}
 			if _, ok := updatedStates[status.WorkspaceId][status.JobState]; !ok {
-				updatedStates[status.WorkspaceId][status.JobState] = make(map[ParameterFilterT]struct{})
+				updatedStates[status.WorkspaceId][status.JobState] = make(map[string]UpdateJobStatusStats)
 			}
 			if status.JobParameters != nil {
+				var parameters ParameterFilterList
 				for _, param := range cacheParameterFilters {
 					v := gjson.GetBytes(status.JobParameters, param).Str
-					updatedStates[status.WorkspaceId][status.JobState][ParameterFilterT{Name: param, Value: v}] = struct{}{}
+					parameters = append(parameters, ParameterFilterT{Name: param, Value: v})
 				}
+				parametersKey := parameters.String()
+				pm := updatedStates[status.WorkspaceId][status.JobState][parametersKey]
+				pm.parameters = parameters // might be zero
+				pm.count++
+				pm.bytes += len(status.ErrorResponse)
+				updatedStates[status.WorkspaceId][status.JobState][parametersKey] = pm
+			} else { // no parameters, empty key
+				pm := updatedStates[status.WorkspaceId][status.JobState][""]
+				pm.count++
+				pm.bytes += len(status.ErrorResponse)
+				updatedStates[status.WorkspaceId][status.JobState][""] = pm
 			}
 
 			if !utf8.ValidString(string(status.ErrorResponse)) {
@@ -2838,38 +2903,53 @@ func (jd *Handle) internalUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsLis
 
 	tx.AddSuccessListener(func() {
 		// clear cache
-		for ds, dsKeys := range updatedStatesByDS {
-			if len(dsKeys) == 0 { // if no keys, we need to invalidate all keys
+		for ds, dsStats := range updatedStatesByDS {
+			if len(dsStats) == 0 { // if no keys, we need to invalidate all keys
 				jd.noResultsCache.Invalidate(ds.Index, "", nil, nil, nil)
 			}
-			for workspace, wsKeys := range dsKeys {
-				if len(wsKeys) == 0 { // if no keys, we need to invalidate all keys
+			for workspace, wsStats := range dsStats {
+				if len(wsStats) == 0 { // if no keys, we need to invalidate all keys
 					jd.noResultsCache.Invalidate(ds.Index, workspace, nil, nil, nil)
 				}
-				for state, parametersMap := range wsKeys {
+				for state, parametersStats := range wsStats {
 					stateList := []string{state}
-					if len(parametersMap) == 0 { // if no keys, we need to invalidate all keys
-						jd.noResultsCache.Invalidate(ds.Index, workspace, customValFilters, stateList, nil)
-					}
-					parameterFilters := lo.Keys(parametersMap)
+					parameterFilters := lo.UniqBy( // gather unique parameter filters
+						lo.FlatMap(
+							lo.Values(parametersStats), // from all JobStatusMetrics
+							func(jsm UpdateJobStatusStats, _ int) []ParameterFilterT {
+								return jsm.parameters
+							},
+						),
+						func(pf ParameterFilterT) string {
+							return pf.String() // uniqueness by string representation
+						},
+					)
+					// invalidate cache for this combination
 					jd.noResultsCache.Invalidate(ds.Index, workspace, customValFilters, stateList, parameterFilters)
 				}
 			}
 		}
 	})
+
+	// use the aggregated stats from updateJobStatusInTx
 	tx.AddSuccessListener(func() {
-		statTags := tags.getStatsTags(jd.tablePrefix)
-		statusCounters := make(map[string]lo.Tuple2[int, int], 0)
-		for i := range statusList {
-			t := statusCounters[statusList[i].JobState]
-			t.A++                                   // job count
-			t.B += len(statusList[i].ErrorResponse) // bytes count
-			statusCounters[statusList[i].JobState] = t
+		merged := updateJobStatusStats{}
+		for _, dsStats := range updatedStatesByDS {
+			merged.Merge(dsStats)
 		}
-		for state, count := range statusCounters {
-			statTags["jobState"] = state
-			jd.stats.NewTaggedStat("jobsdb_updated_jobs", stats.CountType, statTags).Count(count.A)
-			jd.stats.NewTaggedStat("jobsdb_updated_bytes", stats.CountType, statTags).Count(count.B)
+		statsByState := merged.StatsByState()
+		for state, parametersMap := range statsByState {
+			for _, metrics := range parametersMap {
+				statTags := tags.getStatsTags(jd.tablePrefix)
+				statTags["jobState"] = state
+				if len(parameterFilters) == 0 { // only add parameter filters if not already set
+					for _, pf := range metrics.parameters {
+						statTags[pf.Name] = pf.Value
+					}
+				}
+				jd.stats.NewTaggedStat("jobsdb_updated_jobs", stats.CountType, statTags).Count(metrics.count)
+				jd.stats.NewTaggedStat("jobsdb_updated_bytes", stats.CountType, statTags).Count(metrics.bytes)
+			}
 		}
 	})
 
@@ -2881,7 +2961,7 @@ doUpdateJobStatusInTx updates the status of a batch of jobs
 customValFilters[] is passed, so we can efficiently mark empty cache
 Later we can move this to query
 */
-func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []dataSetT, dsRangeList []dataSetRangeT, statusList []*JobStatusT, tags statTags) (updatedStatesByDS map[dataSetT]map[string]map[string]map[ParameterFilterT]struct{}, err error) {
+func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []dataSetT, dsRangeList []dataSetRangeT, statusList []*JobStatusT, tags statTags) (updatedStatesByDS map[dataSetT]updateJobStatusStats, err error) {
 	if len(statusList) == 0 {
 		return updatedStatesByDS, err
 	}
@@ -2893,7 +2973,7 @@ func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []da
 
 	// We scan through the list of jobs and map them to DS
 	var lastPos int
-	updatedStatesByDS = make(map[dataSetT]map[string]map[string]map[ParameterFilterT]struct{})
+	updatedStatesByDS = make(map[dataSetT]updateJobStatusStats)
 	for _, ds := range dsRangeList {
 		minID := ds.minJobID
 		maxID := ds.maxJobID
@@ -2914,7 +2994,7 @@ func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []da
 						logger.NewIntField("prevPos", int64(i-1)),
 					)
 				}
-				var updatedStates map[string]map[string]map[ParameterFilterT]struct{}
+				var updatedStates updateJobStatusStats
 				updatedStates, err = jd.updateJobStatusDSInTx(ctx, tx, ds.ds, statusList[lastPos:i], tags)
 				if err != nil {
 					return updatedStatesByDS, err
@@ -2935,7 +3015,7 @@ func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []da
 				logger.NewIntField("prevJobID", statusList[i-1].JobID),
 				logger.NewIntField("index", int64(i)),
 			)
-			var updatedStates map[string]map[string]map[ParameterFilterT]struct{}
+			var updatedStates updateJobStatusStats
 			updatedStates, err = jd.updateJobStatusDSInTx(ctx, tx, ds.ds, statusList[lastPos:i], tags)
 			if err != nil {
 				return updatedStatesByDS, err
@@ -2957,7 +3037,7 @@ func (jd *Handle) doUpdateJobStatusInTx(ctx context.Context, tx *Tx, dsList []da
 		jd.logger.Debugn("RangeEnd",
 			logger.NewIntField("jobID", statusList[lastPos].JobID),
 			logger.NewIntField("lenStatusList", int64(len(statusList))))
-		var updatedStates map[string]map[string]map[ParameterFilterT]struct{}
+		var updatedStates updateJobStatusStats
 		updatedStates, err = jd.updateJobStatusDSInTx(ctx, tx, dsList[len(dsList)-1], statusList[lastPos:], tags)
 		if err != nil {
 			return updatedStatesByDS, err
