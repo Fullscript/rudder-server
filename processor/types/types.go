@@ -179,6 +179,7 @@ type Metadata struct {
 	TransformationID        string   `json:"transformationId,omitempty"`
 	TransformationVersionID string   `json:"transformationVersionId,omitempty"`
 	SourceDefinitionType    string   `json:"-"`
+	PartitionID             string   `json:"partitionId,omitempty"`
 }
 
 func (m Metadata) GetMessagesIDs() []string {

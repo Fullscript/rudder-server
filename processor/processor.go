@@ -928,7 +928,7 @@ func enhanceWithTimeFields(event *types.TransformerEvent, singularEvent types.Si
 	event.Message["timestamp"] = timestamp.Format(misc.RFC3339Milli)
 }
 
-func (proc *Handle) makeCommonMetadataFromSingularEvent(singularEvent types.SingularEventT, userID string, jobId int64, receivedAt time.Time, source *backendconfig.SourceT, eventParams types.EventParams) *types.Metadata {
+func (proc *Handle) makeCommonMetadataFromSingularEvent(singularEvent types.SingularEventT, userID, partitionID string, jobId int64, receivedAt time.Time, source *backendconfig.SourceT, eventParams types.EventParams) *types.Metadata {
 	commonMetadata := types.Metadata{}
 	commonMetadata.SourceID = source.ID
 	commonMetadata.SourceName = source.Name
@@ -938,6 +938,7 @@ func (proc *Handle) makeCommonMetadataFromSingularEvent(singularEvent types.Sing
 	commonMetadata.InstanceID = proc.instanceID
 	commonMetadata.RudderID = userID
 	commonMetadata.JobID = jobId
+	commonMetadata.PartitionID = partitionID
 	commonMetadata.MessageID = stringify.Any(singularEvent["messageId"])
 	commonMetadata.ReceivedAt = receivedAt.Format(misc.RFC3339Milli)
 	commonMetadata.SourceType = source.SourceDefinition.Name
@@ -971,6 +972,7 @@ func enhanceWithMetadata(commonMetadata *types.Metadata, event *types.Transforme
 	metadata.InstanceID = commonMetadata.InstanceID
 	metadata.RudderID = commonMetadata.RudderID
 	metadata.JobID = commonMetadata.JobID
+	metadata.PartitionID = commonMetadata.PartitionID
 	metadata.MessageID = commonMetadata.MessageID
 	metadata.ReceivedAt = commonMetadata.ReceivedAt
 	metadata.SourceTaskRunID = commonMetadata.SourceTaskRunID
@@ -1128,6 +1130,7 @@ func (proc *Handle) getTransformerEvents(
 		eventMetadata.DestinationDefinitionID = userTransformedEvent.Metadata.DestinationDefinitionID
 		eventMetadata.SourceCategory = userTransformedEvent.Metadata.SourceCategory
 		eventMetadata.TraceParent = userTransformedEvent.Metadata.TraceParent
+		eventMetadata.PartitionID = userTransformedEvent.Metadata.PartitionID
 		updatedEvent := types.TransformerEvent{
 			Message:     userTransformedEvent.Output,
 			Metadata:    *eventMetadata,
@@ -1730,12 +1733,13 @@ func (proc *Handle) preprocessStage(partition string, subJobs subJob, delay time
 		eventParams   types.EventParams
 		dedupKey      dedup.BatchKey
 		requestIP     string
-		recievedAt    time.Time
+		receivedAt    time.Time
 		parameters    json.RawMessage
 		span          stats.TraceSpan
 		source        *backendconfig.SourceT
 		uuid          uuid.UUID
 		customVal     string
+		partitionID   string
 		payloadFunc   func() json.RawMessage
 	}
 
@@ -1828,12 +1832,13 @@ func (proc *Handle) preprocessStage(partition string, subJobs subJob, delay time
 				jobID:         batchEvent.JobID,
 				userId:        batchEvent.UserID,
 				workspaceID:   batchEvent.WorkspaceId,
+				partitionID:   batchEvent.PartitionID,
 				singularEvent: singularEvent,
 				messageID:     messageId,
 				eventParams:   eventParams,
 				dedupKey:      dedupBatchKey,
 				requestIP:     requestIP,
-				recievedAt:    receivedAt,
+				receivedAt:    receivedAt,
 				parameters:    parameters,
 				span:          span,
 				source:        source,
@@ -1870,8 +1875,9 @@ func (proc *Handle) preprocessStage(partition string, subJobs subJob, delay time
 		commonMetadataFromSingularEvent := proc.makeCommonMetadataFromSingularEvent(
 			event.singularEvent,
 			event.userId,
+			event.partitionID,
 			event.jobID,
-			event.recievedAt,
+			event.receivedAt,
 			event.source,
 			event.eventParams,
 		)
@@ -1954,7 +1960,7 @@ func (proc *Handle) preprocessStage(partition string, subJobs subJob, delay time
 		totalEvents++
 		eventsByMessageID[event.messageID] = types.SingularEventWithReceivedAt{
 			SingularEvent: event.singularEvent,
-			ReceivedAt:    event.recievedAt,
+			ReceivedAt:    event.receivedAt,
 		}
 
 		sourceIsTransient := proc.transientSources.Apply(sourceId)
@@ -2075,12 +2081,8 @@ func (proc *Handle) preprocessStage(partition string, subJobs subJob, delay time
 		shallowEventCopy := types.TransformerEvent{}
 		shallowEventCopy.Message = event.singularEvent
 		shallowEventCopy.Message["request_ip"] = event.requestIP
-		enhanceWithTimeFields(&shallowEventCopy, event.singularEvent, event.recievedAt)
-		enhanceWithMetadata(
-			commonMetadataFromSingularEvent,
-			&shallowEventCopy,
-			&backendconfig.DestinationT{},
-		)
+		enhanceWithTimeFields(&shallowEventCopy, event.singularEvent, event.receivedAt)
+		enhanceWithMetadata(commonMetadataFromSingularEvent, &shallowEventCopy, &backendconfig.DestinationT{})
 		trackingPlanID := event.source.DgSourceTrackingPlanConfig.TrackingPlan.Id
 		trackingPlanVersion := event.source.DgSourceTrackingPlanConfig.TrackingPlan.Version
 		rudderTyperTPID := misc.MapLookup(event.singularEvent, "context", "ruddertyper", "trackingPlanId")
@@ -3436,7 +3438,8 @@ func (proc *Handle) destTransform(
 			sourceDefID := metadata.SourceDefinitionID
 			destDefID := metadata.DestinationDefinitionID
 			sourceCategory := metadata.SourceCategory
-			workspaceId := metadata.WorkspaceID
+			workspaceID := metadata.WorkspaceID
+			partitionID := metadata.PartitionID
 			// If the response from the transformer does not have userID in metadata, setting userID to random-uuid.
 			// This is done to respect findWorker logic in router.
 			if rudderID == "" {
@@ -3460,7 +3463,7 @@ func (proc *Handle) destTransform(
 				SourceDefinitionID:      sourceDefID,
 				DestinationDefinitionID: destDefID,
 				RecordID:                recordId,
-				WorkspaceId:             workspaceId,
+				WorkspaceId:             workspaceID,
 				TraceParent:             metadata.TraceParent,
 				ConnectionID:            generateConnectionID(sourceID, destID),
 			}
@@ -3478,7 +3481,8 @@ func (proc *Handle) destTransform(
 				ExpireAt:     time.Now(),
 				CustomVal:    destType,
 				EventPayload: destEventJSON,
-				WorkspaceId:  workspaceId,
+				WorkspaceId:  workspaceID,
+				PartitionID:  partitionID,
 			}
 			if slices.Contains(proc.config.batchDestinations, newJob.CustomVal) {
 				batchDestJobs = append(batchDestJobs, &newJob)
