@@ -2178,7 +2178,7 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 	stateFilters := params.stateFilters
 	customValFilters := params.CustomValFilters
 	var parameterFilters ParameterFilterList = params.ParameterFilters
-	partitionFilters := params.PartitionFilters
+	partitionFilters := lo.Uniq(params.PartitionFilters)
 	workspaceID := params.WorkspaceID
 	checkValidJobState(jd, stateFilters)
 
