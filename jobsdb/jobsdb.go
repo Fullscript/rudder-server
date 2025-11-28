@@ -95,6 +95,7 @@ type GetQueryParams struct {
 	WorkspaceID                   string
 	CustomValFilters              []string
 	ParameterFilters              []ParameterFilterT
+	PartitionFilters              []string
 	stateFilters                  []string
 	afterJobID                    *int64
 
@@ -387,6 +388,7 @@ type JobStatusT struct {
 	Parameters    json.RawMessage `json:"Parameters"`
 	JobParameters json.RawMessage `json:"-"`
 	WorkspaceId   string          `json:"WorkspaceId"`
+	PartitionID   string          `json:"-"`
 }
 
 type ConnectionDetails struct {
@@ -2174,7 +2176,7 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 	stateFilters := params.stateFilters
 	customValFilters := params.CustomValFilters
 	var parameterFilters ParameterFilterList = params.ParameterFilters
-	var partitionFilters []string // TODO: this should be filled in the future
+	var partitionFilters []string = params.PartitionFilters
 	workspaceID := params.WorkspaceID
 	checkValidJobState(jd, stateFilters)
 
@@ -2348,10 +2350,12 @@ func (jd *Handle) getJobsDS(ctx context.Context, ds dataSetT, lastDS bool, param
 			job.LastJobStatus.ErrorCode = jsErrorCode.String
 			job.LastJobStatus.ErrorResponse = jsErrorResponse
 			job.LastJobStatus.Parameters = jsParameters
+			job.LastJobStatus.JobParameters = job.Parameters
+			job.LastJobStatus.WorkspaceId = job.WorkspaceId
+			job.LastJobStatus.PartitionID = job.PartitionID
 		} else {
 			resultsetStates[Unprocessed.State] = struct{}{}
 		}
-		job.LastJobStatus.JobParameters = job.Parameters
 
 		if params.EventsLimit > 0 && runningEventCount > params.EventsLimit && len(jobList) > 0 {
 			// events limit overflow is triggered as long as we have read at least one job
