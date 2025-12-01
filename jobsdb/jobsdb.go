@@ -942,7 +942,7 @@ func (jd *Handle) init() {
 
 	err := jd.WithTx(func(tx *Tx) error {
 		// only one migration should run at a time and block all other processes from adding or removing tables
-		return jd.withDistributedLock(context.Background(), tx, "schema_migrate", func() error {
+		return WithDistributedLock(context.Background(), tx, jd.tablePrefix, "schema_migrate", func() error {
 			// Database schema migration should happen early, even before jobsdb is started,
 			// so that we can be sure that all the necessary tables are created and considered to be in
 			// the latest schema version, before rudder-migrator starts introducing new tables.
@@ -2651,8 +2651,8 @@ func (jd *Handle) addNewDSLoop(ctx context.Context) {
 			// Adding a new DS only creates a new DS & updates the cache. It doesn't move any data so we only take the list lock.
 			// start a transaction
 			err := jd.WithTx(func(tx *Tx) error {
-				return jd.withDistributedSharedLock(ctx, tx, "schema_migrate", func() error { // cannot run while schema migration is running
-					return jd.withDistributedLock(ctx, tx, "add_ds", func() error { // only one add_ds can run at a time
+				return WithDistributedSharedLock(ctx, tx, jd.tablePrefix, "schema_migrate", func() error { // cannot run while schema migration is running
+					return WithDistributedLock(ctx, tx, jd.tablePrefix, "add_ds", func() error { // only one add_ds can run at a time
 						var err error
 						// refresh ds list
 						var dsList []dataSetT
@@ -2722,8 +2722,8 @@ func (jd *Handle) addNewDSLoop(ctx context.Context) {
 	}
 }
 
-func (jd *Handle) getAdvisoryLockForOperation(operation string) int64 {
-	key := fmt.Sprintf("%s_%s", jd.tablePrefix, operation)
+func GetAdvisoryLockForOperation(tablePrefix, operation string) int64 {
+	key := fmt.Sprintf("%s_%s", tablePrefix, operation)
 	h := sha256.New()
 	h.Write([]byte(key))
 	return int64(binary.BigEndian.Uint32(h.Sum(nil)))
@@ -3565,8 +3565,8 @@ func (jd *Handle) GetLastJob(ctx context.Context) *JobT {
 	return &job
 }
 
-func (jd *Handle) withDistributedLock(ctx context.Context, tx *Tx, operation string, f func() error) error {
-	advisoryLock := jd.getAdvisoryLockForOperation(operation)
+func WithDistributedLock(ctx context.Context, tx *Tx, tablePrefix, operation string, f func() error) error {
+	advisoryLock := GetAdvisoryLockForOperation(tablePrefix, operation)
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`SELECT pg_advisory_xact_lock(%d);`, advisoryLock))
 	if err != nil {
 		return fmt.Errorf("error while acquiring advisory lock %d for operation %s: %w", advisoryLock, operation, err)
@@ -3574,8 +3574,8 @@ func (jd *Handle) withDistributedLock(ctx context.Context, tx *Tx, operation str
 	return f()
 }
 
-func (jd *Handle) withDistributedSharedLock(ctx context.Context, tx *Tx, operation string, f func() error) error {
-	advisoryLock := jd.getAdvisoryLockForOperation(operation)
+func WithDistributedSharedLock(ctx context.Context, tx *Tx, tablePrefix, operation string, f func() error) error {
+	advisoryLock := GetAdvisoryLockForOperation(tablePrefix, operation)
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(`SELECT pg_advisory_xact_lock_shared(%d);`, advisoryLock))
 	if err != nil {
 		return fmt.Errorf("error while acquiring a shared advisory lock %d for operation %s: %w", advisoryLock, operation, err)

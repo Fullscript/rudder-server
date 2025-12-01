@@ -1000,11 +1000,10 @@ func TestSortDnumList(t *testing.T) {
 
 func Test_GetAdvisoryLockForOperation_Unique(t *testing.T) {
 	calculated := map[int64]string{}
-	for _, operation := range []string{"add_ds", "migrate_ds", "schema_migrate"} {
+	for _, operation := range []string{"add_ds", "migrate_ds", "schema_migrate", "refresh_buffered_partitions"} {
 		for _, prefix := range []string{"gw", "rt", "batch_rt"} {
-			h := &Handle{tablePrefix: prefix}
 			key := fmt.Sprintf("%s_%s", prefix, operation)
-			advLock := h.getAdvisoryLockForOperation(operation)
+			advLock := GetAdvisoryLockForOperation(prefix, operation)
 			if dupKey, ok := calculated[advLock]; ok {
 				t.Errorf("Duplicate advisory lock calculated for different keys %s and %s: %d", key, dupKey, advLock)
 			}

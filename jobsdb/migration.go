@@ -87,7 +87,7 @@ func (jd *Handle) doMigrateDS(ctx context.Context) error {
 
 	lockStart := time.Now()
 	err = jd.WithTx(func(tx *Tx) error {
-		return jd.withDistributedSharedLock(ctx, tx, "schema_migrate", func() error { // cannot run while schema migration is running
+		return WithDistributedSharedLock(ctx, tx, jd.tablePrefix, "schema_migrate", func() error { // cannot run while schema migration is running
 			// Take the lock and run actual migration
 			if !jd.dsMigrationLock.TryLockWithCtx(ctx) {
 				return fmt.Errorf("acquire dsMigrationLock: %w", ctx.Err())
