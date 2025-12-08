@@ -3,7 +3,10 @@ package partitionbuffer
 import (
 	"context"
 	"errors"
+	"time"
 
+	"github.com/rudderlabs/rudder-go-kit/bytesize"
+	"github.com/rudderlabs/rudder-go-kit/config"
 	"github.com/rudderlabs/rudder-go-kit/logger"
 	"github.com/rudderlabs/rudder-server/jobsdb"
 )
@@ -70,7 +73,12 @@ func WithNumPartitions(numPartitions int) Opt {
 
 // NewJobsDBPartitionBuffer creates a new JobsDBPartitionBuffer with the given options
 func NewJobsDBPartitionBuffer(ctx context.Context, opts ...Opt) (JobsDBPartitionBuffer, error) {
-	jb := &jobsDBPartitionBuffer{}
+	jb := &jobsDBPartitionBuffer{
+		numPartitions:    64,
+		flushBatchSize:   config.SingleValueLoader(100000),
+		flushPayloadSize: config.SingleValueLoader(500 * bytesize.MB),
+		flushMoveTimeout: config.SingleValueLoader(30 * time.Minute),
+	}
 	for _, opt := range opts {
 		opt(jb)
 	}

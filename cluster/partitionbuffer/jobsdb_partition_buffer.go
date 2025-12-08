@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
+	"github.com/rudderlabs/rudder-go-kit/config"
 	"github.com/rudderlabs/rudder-go-kit/logger"
 	"github.com/rudderlabs/rudder-server/jobsdb"
 )
@@ -28,22 +30,23 @@ type JobsDBPartitionBuffer interface {
 
 type jobsDBPartitionBuffer struct {
 	jobsdb.JobsDB
+	primaryWriteJobsDB jobsdb.JobsDB   // primary JobsDB for write operations
+	primaryReadJobsDB  jobsdb.JobsDB   // primary JobsDB for read operations
+	bufferWriteJobsDB  jobsdb.JobsDB   // buffer JobsDB for write operations
+	bufferReadJobsDB   jobsdb.JobsDB   // buffer JobsDB for read operations
+	lifecycleJobsDBs   []jobsdb.JobsDB // JobsDBs involved in lifecycle operations (like Close)
+	logger             logger.Logger
 
-	logger logger.Logger
+	// configuration
+	differentReaderWriterDBs bool                              // if having different reader/writer DBs, we need to refresh buffered partitions on every Store
+	canStore                 bool                              // indicates if Store operations are supported
+	canFlush                 bool                              // indicates if Flush operations are supported
+	numPartitions            int                               // number of partitions used in partition function
+	flushBatchSize           config.ValueLoader[int]           // number of records to flush in a single batch
+	flushPayloadSize         config.ValueLoader[int64]         // total payload size (in bytes) to flush in a single batch
+	flushMoveTimeout         config.ValueLoader[time.Duration] // timeout for move operation, before forcing switchover
 
-	primaryWriteJobsDB jobsdb.JobsDB // primary JobsDB for write operations
-	primaryReadJobsDB  jobsdb.JobsDB // primary JobsDB for read operations
-
-	bufferWriteJobsDB jobsdb.JobsDB // buffer JobsDB for write operations
-	bufferReadJobsDB  jobsdb.JobsDB // buffer JobsDB for read operations
-
-	lifecycleJobsDBs []jobsdb.JobsDB // JobsDBs involved in lifecycle operations (like Close)
-
-	// nolint: unused // TODO: to be used in Store implementation
-	differentReaderWriterDBs  bool                           // if having different reader/writer DBs, we need to refresh buffered partitions on every Store
-	canStore                  bool                           // indicates if Store operations are supported
-	canFlush                  bool                           // indicates if Flush operations are supported
-	numPartitions             int                            // number of partitions used in partition function
+	// state
 	bufferedPartitionsMu      sync.RWMutex                   // mutex to protect bufferedPartitionsVersion & bufferedPartitions
 	bufferedPartitionsVersion int                            // version of the buffered partitions
 	bufferedPartitions        *readOnlyMap[string, struct{}] // buffered partitions

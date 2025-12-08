@@ -97,3 +97,27 @@ func (b *jobsDBPartitionBuffer) getBufferedPartitionsVersionInTx(ctx context.Con
 	}
 	return dbVersion, nil
 }
+
+// removeBufferPartitions unmarks the provided partition ids as buffered. It assumes that the caller holds the necessary lock on bufferedPartitionsMu
+func (b *jobsDBPartitionBuffer) removeBufferPartitions(ctx context.Context, tx *tx.Tx, partitionIds []string) error {
+	var newVersion int
+	// dedup and sort partitionIds to avoid deadlocks
+	partitionIds = lo.Uniq(partitionIds)
+	slices.Sort(partitionIds)
+	query := `DELETE FROM ` + b.Identifier() + `_buffered_partitions WHERE partition_id = ANY($1)`
+	if _, err := tx.ExecContext(ctx, query, pq.Array(partitionIds)); err != nil {
+		return fmt.Errorf("removing buffered partition %+v: %w", partitionIds, err)
+	}
+	var err error
+	newVersion, err = b.getBufferedPartitionsVersionInTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	tx.AddSuccessListener(func() { // update in-memory buffered partitions only on successful commit
+		b.bufferedPartitions = b.bufferedPartitions.Remove(lo.SliceToMap(partitionIds, func(partition string) (string, struct{}) {
+			return partition, struct{}{}
+		}))
+		b.bufferedPartitionsVersion = newVersion
+	})
+	return nil
+}

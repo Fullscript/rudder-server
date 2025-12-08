@@ -250,6 +250,9 @@ type JobsDB interface {
 	// needs to call UpdateJobStatusInTx.
 	WithUpdateSafeTx(context.Context, func(tx UpdateSafeTx) error) error
 
+	// WithUpdateSafeTxFromTx prepares an update-safe environment for an existing transaction.
+	WithUpdateSafeTxFromTx(ctx context.Context, tx *Tx, f func(tx UpdateSafeTx) error) error
+
 	// UpdateJobStatus updates the provided job statuses
 	UpdateJobStatus(ctx context.Context, statusList []*JobStatusT, customValFilters []string, parameterFilters []ParameterFilterT) error
 
@@ -1848,6 +1851,17 @@ func (jd *Handle) WithUpdateSafeTx(ctx context.Context, f func(tx UpdateSafeTx) 
 	})
 }
 
+func (jd *Handle) WithUpdateSafeTxFromTx(ctx context.Context, tx *Tx, f func(tx UpdateSafeTx) error) error {
+	return jd.inUpdateSafeCtx(ctx, func(dsList []dataSetT, dsRangeList []dataSetRangeT) error {
+		return f(&updateSafeTx{
+			tx:          tx,
+			identity:    jd.tablePrefix,
+			dsList:      dsList,
+			dsRangeList: dsRangeList,
+		})
+	})
+}
+
 func (jd *Handle) inUpdateSafeCtx(ctx context.Context, f func(dsList []dataSetT, dsRangeList []dataSetRangeT) error) error {
 	// The order of lock is very important. The migrateDSLoop
 	// takes lock in this order so reversing this will cause
@@ -2165,10 +2179,11 @@ func (jd *Handle) doStoreJobsInTx(ctx context.Context, tx *Tx, ds dataSetT, jobL
 }
 
 type JobsResult struct {
-	Jobs          []*JobT
-	LimitsReached bool
-	EventsCount   int
-	PayloadSize   int64
+	Jobs            []*JobT
+	LimitsReached   bool
+	DSLimitsReached bool
+	EventsCount     int
+	PayloadSize     int64
 }
 
 /*
@@ -3436,6 +3451,7 @@ func (jd *Handle) getJobs(ctx context.Context, params GetQueryParams, more MoreT
 			}
 		}
 		if dsLimit > 0 && dsQueryCount >= dsLimit {
+			res.DSLimitsReached = true
 			break
 		}
 		jobs, dsHit, err := jd.getJobsDS(ctx, ds, len(dsList)-1 == idx, params)

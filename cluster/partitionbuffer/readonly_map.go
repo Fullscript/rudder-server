@@ -60,3 +60,12 @@ func (r *readOnlyMap[K, V]) Append(entries map[K]V) *readOnlyMap[K, V] {
 	}
 	return &readOnlyMap[K, V]{data: newMap}
 }
+
+// Remove returns a new readOnlyMap with the provided entries removed
+func (r *readOnlyMap[K, V]) Remove(entries map[K]V) *readOnlyMap[K, V] {
+	newMap := maps.Clone(r.data)
+	for k := range entries {
+		delete(newMap, k)
+	}
+	return &readOnlyMap[K, V]{data: newMap}
+}
