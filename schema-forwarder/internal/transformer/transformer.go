@@ -71,11 +71,18 @@ func (st *transformer) Transform(job *jobsdb.JobT) (*proto.EventSchemaMessage, e
 	if err := jsonrs.Unmarshal(job.EventPayload, &eventPayload); err != nil {
 		return nil, err
 	}
-	writeKey := st.getWriteKeyFromParams(job.Parameters)
+
+	sourceId := st.getSourceIdFromParams(job.Parameters)
+	if sourceId == "" {
+		return nil, fmt.Errorf("sourceId could not be found")
+	}
+
+	writeKey := st.getWriteKeyFromSourceId(sourceId)
 	if writeKey == "" {
 		return nil, fmt.Errorf("writeKey could not be found")
 	}
-	schemaKey := st.getSchemaKeyFromJob(eventPayload, writeKey)
+
+	schemaKey := st.getSchemaKeyFromJob(eventPayload, writeKey, sourceId)
 	if st.identifierLimit > 0 && len(schemaKey.EventIdentifier) > st.identifierLimit {
 		return nil, fmt.Errorf("event identifier size is greater than %d", st.identifierLimit)
 	}
@@ -88,11 +95,12 @@ func (st *transformer) Transform(job *jobsdb.JobT) (*proto.EventSchemaMessage, e
 }
 
 // getSchemaKeyFromJob returns the schema key from the job based on the event type and event identifier
-func (st *transformer) getSchemaKeyFromJob(eventPayload map[string]interface{}, writeKey string) *proto.EventSchemaKey {
+func (st *transformer) getSchemaKeyFromJob(eventPayload map[string]interface{}, writeKey, sourceId string) *proto.EventSchemaKey {
 	eventType := st.getEventType(eventPayload)
 	return &proto.EventSchemaKey{
 		WriteKey:        writeKey,
 		EventType:       eventType,
+		SourceId:        sourceId,
 		EventIdentifier: st.getEventIdentifier(eventPayload, eventType),
 	}
 }
@@ -193,13 +201,18 @@ func (st *transformer) disablePIIReporting(writeKey string) bool {
 	return st.newPIIReportingSettings[writeKey]
 }
 
-// getWriteKeyFromParams returns the write key from the job parameters
-func (st *transformer) getWriteKeyFromParams(parameters json.RawMessage) string {
-	sourceId := gjson.GetBytes(parameters, "source_id").Str
-	if sourceId == "" {
-		return sourceId
-	}
+// getWriteKeyFromSourceId returns the write key from the source id
+func (st *transformer) getWriteKeyFromSourceId(sourceId string) string {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.sourceWriteKeyMap[sourceId]
+}
+
+// getSourceIdFromParams returns the source id from the job parameters
+func (st *transformer) getSourceIdFromParams(parameters json.RawMessage) string {
+	sourceId := gjson.GetBytes(parameters, "source_id").Str
+	if sourceId == "" {
+		return ""
+	}
+	return sourceId
 }

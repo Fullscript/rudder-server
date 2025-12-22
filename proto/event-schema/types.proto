@@ -8,6 +8,7 @@ message EventSchemaKey {
   string writeKey = 1;
   string eventType = 2;
   string eventIdentifier = 3;
+  string sourceId = 4;
 }
 message EventSchemaMessage {
   string workspaceID = 1;

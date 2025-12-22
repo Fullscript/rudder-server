@@ -69,15 +69,22 @@ func Test_SchemaTransformer_NoDataRetention(t *testing.T) {
 	})
 
 	t.Run("Test getSchemaKeyFromJob", func(t *testing.T) {
-		require.Equal(t, schemaTransformer.getSchemaKeyFromJob(testdata.TrackEvent, testdata.WriteKeyEnabled), &testdata.TestEventSchemaKey)
+		require.Equal(t, schemaTransformer.getSchemaKeyFromJob(testdata.TrackEvent, testdata.WriteKeyEnabled, testdata.SourceIDEnabled), &testdata.TestEventSchemaKey)
 	})
 
-	t.Run("Test getWriteKeyFromParams", func(t *testing.T) {
-		require.Equal(t, schemaTransformer.getWriteKeyFromParams(testdata.TestParams), testdata.WriteKeyEnabled)
+	t.Run("Test getSourceIdFromParams", func(t *testing.T) {
+		require.Equal(t, schemaTransformer.getSourceIdFromParams(testdata.TestParams), testdata.SourceIDEnabled)
+		require.Equal(t, schemaTransformer.getSourceIdFromParams([]byte(`{}`)), "")
+		require.Equal(t, schemaTransformer.getSourceIdFromParams([]byte(`{"source_id": ""}`)), "")
+	})
+
+	t.Run("Test getWriteKeyFromSourceId", func(t *testing.T) {
+		require.Equal(t, schemaTransformer.getWriteKeyFromSourceId(testdata.SourceIDEnabled), testdata.WriteKeyEnabled)
+		require.Equal(t, schemaTransformer.getWriteKeyFromSourceId("non-existent-source"), "")
 	})
 
 	t.Run("Test getSchemaMessage", func(t *testing.T) {
-		schemaKey := schemaTransformer.getSchemaKeyFromJob(testdata.TrackEvent, testdata.WriteKeyEnabled)
+		schemaKey := schemaTransformer.getSchemaKeyFromJob(testdata.TrackEvent, testdata.WriteKeyEnabled, testdata.SourceIDEnabled)
 		timeNow := time.Now()
 		schemaMessage, err := schemaTransformer.getSchemaMessage(schemaKey, testdata.TrackEvent, []byte{}, testdata.SampleWorkspaceID, timeNow)
 		testEventSchemaMessage := generateTestEventSchemaMessage(timeNow)
@@ -121,6 +128,26 @@ func Test_SchemaTransformer_NoDataRetention(t *testing.T) {
 		require.Nil(t, e)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "event schema has more than")
+	})
+
+	t.Run("Test Transform missing sourceId", func(t *testing.T) {
+		event := generateTestJob(t, time.Now())
+		event.Parameters = []byte(`{}`)
+
+		e, err := schemaTransformer.Transform(event)
+		require.Nil(t, e)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "sourceId could not be found")
+	})
+
+	t.Run("Test Transform missing writeKey", func(t *testing.T) {
+		event := generateTestJob(t, time.Now())
+		event.Parameters = []byte(`{"source_id": "non-existent-source"}`)
+
+		e, err := schemaTransformer.Transform(event)
+		require.Nil(t, e)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "writeKey could not be found")
 	})
 }
 
